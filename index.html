@@ -406,6 +406,15 @@ select.form-input option{background:var(--surface)}
       <label class="form-label">Category Type</label>
       <div id="tx-cat-sections"></div>
     </div>
+    <!-- Linked selector shown when Loan Payment / CC Payment / Bill is chosen -->
+    <div id="tx-linked-group" style="display:none">
+      <div class="form-group">
+        <label class="form-label" id="tx-linked-label">Select Loan</label>
+        <select class="form-input" id="tx-linked-select" onchange="onLinkedSelect()"></select>
+      </div>
+      <div class="info-box" id="tx-linked-info" style="display:none;font-size:.78rem"></div>
+    </div>
+
     <div class="form-group" id="tx-subcategory-group" style="display:none">
       <label class="form-label">Sub-category / Type</label>
       <select class="form-input" id="tx-subcategory"></select>
@@ -727,8 +736,26 @@ const CAT_COLORS={
   interest:'#00d4aa',investment:'#34d399',remittance:'#67e8f9',allowance:'#a78bfa',pension:'#818cf8',others_in:'#94a3b8',
 };
 
-function catColor(id){return CAT_COLORS[id]||'#94a3b8'}
-function getCat(id,type){
+function catColor(id){
+  if(id==='fin_loan')return'#fca5a5';
+  if(id==='fin_cc')return'#fc8181';
+  if(id==='fin_bill')return'#facc15';
+  return CAT_COLORS[id]||'#94a3b8';
+}
+function getCat(id,type,tx){
+  // For linked records, derive label from linked data
+  if(id==='fin_loan'){
+    if(tx&&tx.linkedId){const l=loans.find(x=>x.id===tx.linkedId);if(l)return{label:'Loan: '+l.name,icon:'🏦',group:'Finance'};}
+    return{label:'Loan Payment',icon:'🏦',group:'Finance'};
+  }
+  if(id==='fin_cc'){
+    if(tx&&tx.linkedId){const c=cards.find(x=>x.id===tx.linkedId);if(c)return{label:'CC: '+c.name,icon:'💳',group:'Finance'};}
+    return{label:'CC Payment',icon:'💳',group:'Finance'};
+  }
+  if(id==='fin_bill'){
+    if(tx&&tx.linkedId){const b=bills.find(x=>x.id===tx.linkedId);if(b)return{label:'Bill: '+b.name,icon:BILL_CAT_ICONS[b.category]||'📋',group:'Bills'};}
+    return{label:'Bill Payment',icon:'🧾',group:'Bills'};
+  }
   const arr=type==='income'?INCOME_CATS:EXPENSE_CATS;
   return arr.find(c=>c.id===id)||{label:id,icon:'💰',group:'Other'};
 }
@@ -837,14 +864,20 @@ document.querySelectorAll('.modal-overlay').forEach(o=>{
 let currentTxType='expense';
 let selectedCat=null;
 
+// Linked record tracking
+let linkedType=null; // 'loan' | 'bill' | 'cc' | null
+let linkedId=null;
+
 function openAddModal(){
   setTxType('expense',document.getElementById('tx-type-expense'));
   document.getElementById('tx-amount').value='';
   document.getElementById('tx-notes').value='';
   document.getElementById('tx-merchant').value='';
   document.getElementById('tx-date').value=new Date().toISOString().split('T')[0];
-  selectedCat=null;
+  selectedCat=null;linkedType=null;linkedId=null;
   document.getElementById('tx-subcategory-group').style.display='none';
+  document.getElementById('tx-linked-group').style.display='none';
+  document.getElementById('tx-linked-info').style.display='none';
   document.getElementById('merchant-suggestions').innerHTML='';
   renderCatSections();
   openModal('add-modal');
@@ -854,9 +887,11 @@ function setTxType(type,btn){
   currentTxType=type;
   document.querySelectorAll('#add-modal .tab').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
-  selectedCat=null;
+  selectedCat=null;linkedType=null;linkedId=null;
   renderCatSections();
   document.getElementById('tx-subcategory-group').style.display='none';
+  document.getElementById('tx-linked-group').style.display='none';
+  document.getElementById('tx-linked-info').style.display='none';
   const ml=document.getElementById('tx-merchant-label');
   ml.textContent=type==='income'?'Income Source / Employer':'Merchant / Biller / Provider';
 }
@@ -865,41 +900,119 @@ function renderCatSections(){
   const cats=currentTxType==='income'?INCOME_CATS:EXPENSE_CATS;
   const groups={};
   cats.forEach(c=>{if(!groups[c.group])groups[c.group]=[];groups[c.group].push(c)});
+  // Inject dynamic Finance options from real data
+  if(currentTxType==='expense'){
+    if(loans.length) groups['Finance']=(groups['Finance']||[]).filter(c=>c.id!=='fin_loan');
+    if(cards.length) groups['Finance']=(groups['Finance']||[]).filter(c=>c.id!=='fin_cc');
+    if(bills.length) groups['Bills']=(groups['Bills']||[]);
+  }
   const el=document.getElementById('tx-cat-sections');
-  el.innerHTML=Object.entries(groups).map(([g,items])=>`
-    <div class="cat-section">
-      <div class="cat-section-title">${g}</div>
-      <div class="cat-grid">${items.map(c=>`
-        <div class="cat-chip ${selectedCat===c.id?'selected':''}" onclick="selectCat('${c.id}')">
-          <span class="cat-chip-icon">${c.icon}</span>
-          <span>${c.label}</span>
-        </div>`).join('')}
-      </div>
-    </div>`).join('');
+  let html='';
+  // Dynamic Loans section
+  if(currentTxType==='expense'&&loans.length){
+    html+=`<div class="cat-section"><div class="cat-section-title">💳 Loan Payments</div><div class="cat-grid">`;
+    loans.forEach(l=>{
+      html+=`<div class="cat-chip ${selectedCat==='fin_loan_'+l.id?'selected':''}" onclick="selectLinked('fin_loan','${l.id}','${l.name.replace(/'/g,"\\'")}')">
+        <span class="cat-chip-icon">🏦</span><span style="font-size:.65rem">${l.name}</span></div>`;
+    });
+    html+=`</div></div>`;
+  }
+  // Dynamic Bills section
+  if(currentTxType==='expense'&&bills.length){
+    html+=`<div class="cat-section"><div class="cat-section-title">🧾 Bill Payments</div><div class="cat-grid">`;
+    bills.forEach(b=>{
+      const icon=BILL_CAT_ICONS[b.category]||'📋';
+      html+=`<div class="cat-chip ${selectedCat==='fin_bill_'+b.id?'selected':''}" onclick="selectLinked('fin_bill','${b.id}','${b.name.replace(/'/g,"\\'")}')">
+        <span class="cat-chip-icon">${icon}</span><span style="font-size:.65rem">${b.name}</span></div>`;
+    });
+    html+=`</div></div>`;
+  }
+  // Dynamic CC section
+  if(currentTxType==='expense'&&cards.length){
+    html+=`<div class="cat-section"><div class="cat-section-title">💳 Credit Card Payments</div><div class="cat-grid">`;
+    cards.forEach(c=>{
+      html+=`<div class="cat-chip ${selectedCat==='fin_cc_'+c.id?'selected':''}" onclick="selectLinked('fin_cc','${c.id}','${c.name.replace(/'/g,"\\'")}')">
+        <span class="cat-chip-icon">💳</span><span style="font-size:.65rem">${c.name}</span></div>`;
+    });
+    html+=`</div></div>`;
+  }
+  // All other categories
+  Object.entries(groups).forEach(([g,items])=>{
+    // Skip Finance sub-items already shown as linked
+    const filteredItems=items.filter(c=>!['fin_loan','fin_cc'].includes(c.id)||
+      (c.id==='fin_loan'&&!loans.length)||(c.id==='fin_cc'&&!cards.length));
+    if(!filteredItems.length)return;
+    html+=`<div class="cat-section"><div class="cat-section-title">${g}</div><div class="cat-grid">
+      ${filteredItems.map(c=>`<div class="cat-chip ${selectedCat===c.id?'selected':''}" onclick="selectCat('${c.id}')">
+        <span class="cat-chip-icon">${c.icon}</span><span>${c.label}</span></div>`).join('')}
+    </div></div>`;
+  });
+  el.innerHTML=html;
+}
+
+function selectLinked(type,id,name){
+  // type: 'fin_loan' | 'fin_bill' | 'fin_cc'
+  selectedCat=type+'_'+id;
+  linkedType=type;linkedId=id;
+  renderCatSections();
+  document.getElementById('tx-subcategory-group').style.display='none';
+  document.getElementById('merchant-suggestions').innerHTML='';
+  // Pre-fill merchant with the linked record name
+  document.getElementById('tx-merchant').value=name;
+  // Show linked info box
+  const linkedGrp=document.getElementById('tx-linked-group');
+  const infoBox=document.getElementById('tx-linked-info');
+  linkedGrp.style.display='none'; // no dropdown needed, already selected by chip
+  if(type==='fin_loan'){
+    const l=loans.find(x=>x.id===id);
+    if(l){
+      infoBox.style.display='block';
+      infoBox.textContent=`📋 ${l.name} · Balance: ${fmt(l.balance)} · Monthly: ${fmt(l.monthly)}`;
+      if(!document.getElementById('tx-amount').value)
+        document.getElementById('tx-amount').value=l.monthly||'';
+    }
+  } else if(type==='fin_cc'){
+    const c=cards.find(x=>x.id===id);
+    if(c){
+      const minPay=Math.max(c.balance*c.minPct/100,500);
+      infoBox.style.display='block';
+      infoBox.textContent=`💳 ${c.name} · Balance: ${fmt(c.balance)} · Min Payment: ${fmt(minPay)}`;
+      if(!document.getElementById('tx-amount').value)
+        document.getElementById('tx-amount').value=minPay.toFixed(2);
+    }
+  } else if(type==='fin_bill'){
+    const b=bills.find(x=>x.id===id);
+    if(b){
+      infoBox.style.display='block';
+      infoBox.textContent=`🧾 ${b.name} · Default: ${fmt(b.defaultAmount)} · Due: Day ${b.dueDay}`;
+      if(!document.getElementById('tx-amount').value)
+        document.getElementById('tx-amount').value=b.defaultAmount||'';
+    }
+  }
 }
 
 function selectCat(id){
-  selectedCat=id;
+  selectedCat=id;linkedType=null;linkedId=null;
   renderCatSections();
-  // Show sub-categories
+  document.getElementById('tx-linked-group').style.display='none';
+  document.getElementById('tx-linked-info').style.display='none';
   const cats=currentTxType==='income'?INCOME_CATS:EXPENSE_CATS;
   const cat=cats.find(c=>c.id===id);
   const subGroup=document.getElementById('tx-subcategory-group');
   const subSel=document.getElementById('tx-subcategory');
   if(cat&&cat.subs&&cat.subs.length>0){
     subSel.innerHTML='<option value="">-- Select or type below --</option>'+cat.subs.map(s=>`<option value="${s}">${s}</option>`).join('');
-    subSel.onchange=()=>{
-      if(subSel.value)document.getElementById('tx-merchant').value=subSel.value;
-    };
+    subSel.onchange=()=>{if(subSel.value)document.getElementById('tx-merchant').value=subSel.value;};
     subGroup.style.display='block';
-    // Merchant suggestions
-    const suggEl=document.getElementById('merchant-suggestions');
-    suggEl.innerHTML=cat.subs.slice(0,6).map(s=>`<span class="merchant-tag" onclick="document.getElementById('tx-merchant').value='${s}'">${s}</span>`).join('');
+    document.getElementById('merchant-suggestions').innerHTML=cat.subs.slice(0,6).map(s=>
+      `<span class="merchant-tag" onclick="document.getElementById('tx-merchant').value='${s}'">${s}</span>`).join('');
   } else {
     subGroup.style.display='none';
     document.getElementById('merchant-suggestions').innerHTML='';
   }
 }
+
+function onLinkedSelect(){}
 
 function saveTransaction(){
   const amt=parseFloat(document.getElementById('tx-amount').value);
@@ -909,25 +1022,55 @@ function saveTransaction(){
   if(!amt||amt<=0){showSnack('Enter a valid amount');return}
   if(!date){showSnack('Pick a date');return}
   if(!selectedCat){showSnack('Select a category');return}
-  transactions.push({
+
+  // Determine real category id for storage
+  let realCat=selectedCat;
+  if(linkedType==='fin_loan')realCat='fin_loan';
+  else if(linkedType==='fin_cc')realCat='fin_cc';
+  else if(linkedType==='fin_bill')realCat='fin_bill';
+
+  const tx={
     id:Date.now().toString(),type:currentTxType,
-    amount:amt,category:selectedCat,date,notes,merchant,
+    amount:amt,category:realCat,date,notes,merchant,
+    linkedType:linkedType||null,linkedId:linkedId||null,
     createdAt:Date.now()
-  });
-  saveAll();closeModal('add-modal');
+  };
+  transactions.push(tx);
+
+  // ── Auto-update linked records ──
+  if(linkedType==='fin_loan'&&linkedId){
+    const l=loans.find(x=>x.id===linkedId);
+    if(l){l.balance=Math.max(0,l.balance-amt);saveAll();}
+  } else if(linkedType==='fin_cc'&&linkedId){
+    const c=cards.find(x=>x.id===linkedId);
+    if(c){c.balance=Math.max(0,c.balance-amt);saveAll();}
+  } else if(linkedType==='fin_bill'&&linkedId){
+    const b=bills.find(x=>x.id===linkedId);
+    if(b){
+      // Mark the bill month as paid with the transaction amount/date
+      const mk=date.substring(0,7); // YYYY-MM
+      b.payments[mk]={paid:true,amount:amt,date,notes,txId:tx.id};
+      saveAll();
+    }
+  } else {
+    saveAll();
+  }
+
+  closeModal('add-modal');
   showSnack('Transaction saved ✓');
   refreshCurrentPage();
 }
 
 function entryHTML(t){
-  const cat=getCat(t.category,t.type);
+  const cat=getCat(t.category,t.type,t);
   const color=catColor(t.category);
   const merchantLine=t.merchant?`<div class="entry-merchant">${t.merchant}</div>`:'';
   const noteLine=t.notes?`<div class="entry-note">${t.notes}</div>`:'';
+  const linkedBadge=t.linkedType?`<span style="font-size:.6rem;background:rgba(0,212,170,.15);color:var(--accent);padding:.1rem .35rem;border-radius:4px;margin-left:.3rem">linked</span>`:'';
   return`<div class="entry-item" onclick="showTxDetail('${t.id}')">
     <div class="entry-dot" style="background:${color}22;color:${color}">${cat.icon}</div>
     <div class="entry-info">
-      <div class="entry-cat">${cat.label}</div>
+      <div class="entry-cat">${cat.label}${linkedBadge}</div>
       ${merchantLine}${noteLine}
     </div>
     <div class="entry-amt ${t.type}">
@@ -940,14 +1083,17 @@ function entryHTML(t){
 function showTxDetail(id){
   const t=transactions.find(x=>x.id===id);
   if(!t)return;
-  const cat=getCat(t.category,t.type);
+  const cat=getCat(t.category,t.type,t);
   const color=catColor(t.category);
+  let linkedInfo='';
+  if(t.linkedType==='fin_loan'){const l=loans.find(x=>x.id===t.linkedId);if(l)linkedInfo=`<div class="sum-row"><span class="sum-label">Linked Loan</span><span class="sum-val">${l.name} · Balance: ${fmt(l.balance)}</span></div>`;}
+  if(t.linkedType==='fin_cc'){const c=cards.find(x=>x.id===t.linkedId);if(c)linkedInfo=`<div class="sum-row"><span class="sum-label">Linked Card</span><span class="sum-val">${c.name} (${c.bank})</span></div>`;}
+  if(t.linkedType==='fin_bill'){const b=bills.find(x=>x.id===t.linkedId);if(b)linkedInfo=`<div class="sum-row"><span class="sum-label">Linked Bill</span><span class="sum-val">${b.name}</span></div>`;}
   document.getElementById('tx-detail-content').innerHTML=`
     <div style="text-align:center;padding:.75rem 0">
       <div style="font-size:2.5rem">${cat.icon}</div>
       <div style="font-family:'Syne',sans-serif;font-size:1.8rem;font-weight:800;color:${t.type==='income'?'var(--success)':'var(--danger)'};margin:.25rem 0">
-        ${t.type==='income'?'+':'-'}${fmt(t.amount)}
-      </div>
+        ${t.type==='income'?'+':'-'}${fmt(t.amount)}</div>
       <div style="font-size:.9rem;color:var(--text2)">${cat.label}</div>
       ${t.merchant?`<div style="font-size:.8rem;color:var(--text3);margin-top:.2rem">📍 ${t.merchant}</div>`:''}
     </div>
@@ -955,6 +1101,7 @@ function showTxDetail(id){
     <div class="sum-row"><span class="sum-label">Date</span><span class="sum-val">${formatDate(t.date)}</span></div>
     <div class="sum-row"><span class="sum-label">Category</span><span class="sum-val">${cat.group} › ${cat.label}</span></div>
     ${t.merchant?`<div class="sum-row"><span class="sum-label">Merchant / Biller</span><span class="sum-val">${t.merchant}</span></div>`:''}
+    ${linkedInfo}
     ${t.notes?`<div class="sum-row"><span class="sum-label">Notes</span><span class="sum-val">${t.notes}</span></div>`:''}
   `;
   document.getElementById('tx-detail-delete').onclick=()=>{
@@ -1358,6 +1505,21 @@ function renderLoans(){
     const paidPct=l.principal>0?Math.min(100,(1-l.balance/l.principal)*100):0;
     const remaining=l.monthly>0?Math.ceil(l.balance/l.monthly):0;
     const totalInt=l.totalPayable?l.totalPayable-l.principal:0;
+    // Payment history from transactions
+    const loanTxs=transactions.filter(t=>t.linkedId===l.id&&t.linkedType==='fin_loan').sort((a,b)=>new Date(b.date)-new Date(a.date));
+    const totalPaid=loanTxs.reduce((s,t)=>s+t.amount,0);
+    const payHistHTML=loanTxs.length?`
+      <div style="margin-top:.75rem">
+        <div style="font-size:.7rem;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:.35rem">Payment History</div>
+        ${loanTxs.slice(0,4).map(t=>`<div style="display:flex;justify-content:space-between;padding:.3rem 0;border-bottom:1px solid var(--border);font-size:.75rem">
+          <span style="color:var(--text2)">${formatDate(t.date)}</span>
+          <span style="color:var(--success);font-weight:600">-${fmt(t.amount)}</span>
+        </div>`).join('')}
+        ${loanTxs.length>4?`<div style="font-size:.7rem;color:var(--text3);text-align:center;margin-top:.3rem">+${loanTxs.length-4} more payments</div>`:''}
+        <div style="display:flex;justify-content:space-between;margin-top:.4rem;font-size:.75rem;font-weight:600">
+          <span style="color:var(--text3)">Total Paid</span><span style="color:var(--success)">${fmt(totalPaid)}</span>
+        </div>
+      </div>` : '';
     return`<div class="loan-card">
       <div class="loan-header">
         <div class="loan-icon" style="background:rgba(129,140,248,.15);color:var(--accent3)">🏦</div>
@@ -1384,6 +1546,7 @@ function renderLoans(){
         <div class="prog-bar"><div class="prog-fill" style="width:${paidPct}%;background:var(--accent3)"></div></div>
       </div>
       ${l.startDate?`<div style="font-size:.7rem;color:var(--text3);margin-top:.4rem">Started: ${formatDate(l.startDate)}</div>`:''}
+      ${payHistHTML}
     </div>`;
   }).join('');
   el.innerHTML=html;
@@ -1447,12 +1610,23 @@ function renderCards(){
     const pay24=ccPMT(c.balance,c.rate,24);
     const totalIntMin=minPay*moMonths-c.balance;
     const utilColor=utilPct>80?'var(--danger)':utilPct>50?'var(--warn)':'var(--accent)';
+    // Payment history from transactions
+    const ccTxs=transactions.filter(t=>t.linkedId===c.id&&t.linkedType==='fin_cc').sort((a,b)=>new Date(b.date)-new Date(a.date));
+    const totalPaid=ccTxs.reduce((s,t)=>s+t.amount,0);
+    const payHistHTML=ccTxs.length?`
+      <div style="margin-top:.75rem">
+        <div style="font-size:.7rem;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:.35rem">Payment History</div>
+        ${ccTxs.slice(0,4).map(t=>`<div style="display:flex;justify-content:space-between;padding:.3rem 0;border-bottom:1px solid var(--border);font-size:.75rem">
+          <span style="color:var(--text2)">${formatDate(t.date)}</span>
+          <span style="color:var(--success);font-weight:600">-${fmt(t.amount)}</span>
+        </div>`).join('')}
+        <div style="display:flex;justify-content:space-between;margin-top:.4rem;font-size:.75rem;font-weight:600">
+          <span style="color:var(--text3)">Total Paid</span><span style="color:var(--success)">${fmt(totalPaid)}</span>
+        </div>
+      </div>` : '';
     return`<div class="cc-card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div>
-          <div class="cc-name">${c.name}</div>
-          <div class="cc-bank">${c.bank} · Cut-off: Day ${c.cutoff}</div>
-        </div>
+        <div><div class="cc-name">${c.name}</div><div class="cc-bank">${c.bank} · Cut-off: Day ${c.cutoff}</div></div>
         <div style="display:flex;gap:.3rem">
           <button class="edit-btn" onclick="openEditCC('${c.id}')">✏️</button>
           <button class="delete-btn" onclick="deleteCard('${c.id}')">🗑</button>
@@ -1473,6 +1647,7 @@ function renderCards(){
         <div class="sum-row"><span class="sum-label">Minimum only (${moMonths} mos)</span><span class="sum-val" style="color:var(--danger)">${fmt(minPay)}/mo</span></div>
         <div style="font-size:.7rem;color:var(--text3);margin-top:.3rem">Interest cost (min pay only): ${fmt(Math.max(0,totalIntMin))}</div>
       </div>
+      ${payHistHTML}
     </div>`;
   }).join('');
   el.innerHTML=html;
