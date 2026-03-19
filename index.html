@@ -535,7 +535,7 @@ select.form-input option{background:var(--surface)}
     <input type="hidden" id="bill-pay-mk">
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="markBillUnpaid()">Mark Unpaid</button>
-      <button class="btn btn-primary" onclick="saveBillPayment()">Save Payment</button>
+      <button class="btn btn-primary" onclick="saveBillPayment()">Save Payment</button>     
     </div>
   </div>
 </div>
@@ -642,6 +642,29 @@ let cards=DB.get('cards2',[]);
 let budgets=DB.get('budgets2',{});
 let assets=DB.get('assets2',[]);
 let settings=DB.get('settings2',{name:'',incomeTarget:0});
+// --- UNIONBANK INTEREST CALCULATIONS ---
+function calculateUBInterest(balance, txs, rate = 0.02785) {
+    const dailyRate = rate / 30;
+    let totalInterest = 0;
+    let runningBalance = parseFloat(balance);
+    
+    // Simulate a 30-day cycle
+    for (let i = 0; i < 30; i++) {
+        totalInterest += runningBalance * dailyRate;
+    }
+    return parseFloat(totalInterest.toFixed(2));
+}
+
+function refreshCardInterest() {
+    cards = cards.map(card => {
+        if (card.name.toLowerCase().includes('unionbank')) {
+            card.pendingInterest = calculateUBInterest(card.balance, transactions, 0.02785);
+        }
+        return card;
+    });
+    saveAll();
+}
+// ---------------------------------------
 function saveAll(){
   DB.set('tx2',transactions);DB.set('loans2',loans);DB.set('bills2',bills);
   DB.set('cards2',cards);DB.set('budgets2',budgets);DB.set('assets2',assets);DB.set('settings2',settings);
