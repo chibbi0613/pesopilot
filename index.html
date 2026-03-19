@@ -540,6 +540,40 @@ select.form-input option{background:var(--surface)}
   </div>
 </div>
 
+  // --- ADD THIS STARTING AROUND LINE 540 IN index.html ---
+
+/** 
+ * Computes Daily Balance Interest for UnionBank alignment 
+ */
+function computeDailyInterest(transactions, startDate, endDate, monthlyRate = 0.03) {
+    const dailyRate = monthlyRate / 30;
+    let totalInterest = 0;
+    let currentBalance = 0;
+    
+    // Sort transactions by date to ensure daily balance is accurate
+    const sortedTxs = [...transactions].sort((a, b) => new Date(a.date) - new Date(b.date));
+    
+    for (let d = new Date(startDate); d <= new Date(endDate); d.setDate(d.getDate() + 1)) {
+        const dateStr = d.toISOString().split('T')[0];
+        const dayTxs = sortedTxs.filter(tx => tx.date === dateStr);
+        
+        dayTxs.forEach(tx => currentBalance += parseFloat(tx.amount));
+        
+        // Add interest for the day based on the closing balance
+        totalInterest += Math.max(0, currentBalance * dailyRate);
+    }
+    return totalInterest;
+}
+
+/** 
+ * Tracks 'Hidden' interest for the next statement 
+ */
+function trackResidualInterest(unpaidBalance, lastStatementDate, paymentDate, rate = 0.03) {
+    const dailyRate = rate / 30;
+    const days = (new Date(paymentDate) - new Date(lastStatementDate)) / (1000 * 60 * 60 * 24);
+    return Math.max(0, unpaidBalance * dailyRate * days);
+}
+      
 <!-- ══ CC MODAL ══ -->
 <div class="modal-overlay" id="cc-modal">
   <div class="modal">
