@@ -643,26 +643,28 @@ let budgets=DB.get('budgets2',{});
 let assets=DB.get('assets2',[]);
 let settings=DB.get('settings2',{name:'',incomeTarget:0});
 // --- UNIONBANK INTEREST CALCULATIONS ---
-function calculateUBInterest(balance, txs, rate = 0.02785) {
+function calculateUBInterest(balance, rate = 0.02785) {
     const dailyRate = rate / 30;
     let totalInterest = 0;
     let runningBalance = parseFloat(balance);
     
-    // Simulate a 30-day cycle
+    // Simulates the 30-day billing cycle for your card
     for (let i = 0; i < 30; i++) {
-        totalInterest += runningBalance * dailyRate;
+        totalInterest += (runningBalance * dailyRate);
     }
     return parseFloat(totalInterest.toFixed(2));
 }
 
 function refreshCardInterest() {
+    // This looks through your 'cards' array from Line 641
     cards = cards.map(card => {
         if (card.name.toLowerCase().includes('unionbank')) {
-            card.pendingInterest = calculateUBInterest(card.balance, transactions, 0.02785);
+            // Calculates based on your current balance of 80,386.83
+            card.interestCharge = calculateUBInterest(card.balance, 0.02785);
         }
         return card;
     });
-    saveAll();
+    saveAll(); // Saves the updated interest to your LocalStorage
 }
 // ---------------------------------------
 function saveAll(){
